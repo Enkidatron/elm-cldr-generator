@@ -1,0 +1,6 @@
+[submodule "elm-cldr"]
+	path = elm-cldr
+	url = https://github.com/Enkidatron/elm-cldr
+[submodule "src/cldr-json"]
+	path = src/cldr-json
+	url = https://github.com/unicode-org/cldr-json
