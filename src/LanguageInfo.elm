@@ -1,6 +1,6 @@
 module LanguageInfo exposing (LanguageInfo, decoder, snakeIdentifier)
 
-import Internal.Structures exposing (AmPmNames, MonthNames, Patterns, WeekdayNames)
+import Internal.Structures exposing (AmPmNames, EraNames, MonthNames, Patterns, WeekdayNames)
 import Json.Decode as JD exposing (Decoder)
 import Json.Decode.Pipeline as JDPipe
 import Set exposing (Set)
@@ -10,12 +10,16 @@ type alias LanguageInfo =
     { language : String
     , script : Maybe String
     , territory : Maybe String
+    , variant : Maybe String
     , amPmNames : AmPmNames
     , datePatterns : Patterns String
     , monthNames : MonthNames
     , monthNamesShort : MonthNames
     , weekdayNames : WeekdayNames
     , weekdayNamesShort : WeekdayNames
+    , eraNames : EraNames
+    , timePatterns : Patterns String
+    , dateTimePatterns : Patterns String
     }
 
 
@@ -30,12 +34,16 @@ languageInfoDecoder =
         |> JDPipe.requiredAt [ "identity", "language" ] JD.string
         |> JDPipe.optionalAt [ "identity", "script" ] (JD.nullable JD.string) Nothing
         |> JDPipe.optionalAt [ "identity", "territory" ] (JD.nullable JD.string) Nothing
+        |> JDPipe.optionalAt [ "identity", "variant" ] (JD.nullable JD.string) Nothing
         |> JDPipe.custom amPmNamesDecoder
         |> JDPipe.custom datePatternsDecoder
         |> JDPipe.custom monthNamesDecoder
         |> JDPipe.custom monthNamesShortDecoder
         |> JDPipe.custom weekdayNamesDecoder
         |> JDPipe.custom weekdayNamesShortDecoder
+        |> JDPipe.custom eraNamesDecoder
+        |> JDPipe.custom timePatternsDecoder
+        |> JDPipe.custom dateTimePatternsDecoder
 
 
 amPmNamesDecoder : Decoder AmPmNames
@@ -50,6 +58,18 @@ amPmNamesDecoder =
 datePatternsDecoder : Decoder (Patterns String)
 datePatternsDecoder =
     JD.at [ "dates", "calendars", "gregorian", "dateFormats" ]
+        (patternDecoder JD.string)
+
+
+timePatternsDecoder : Decoder (Patterns String)
+timePatternsDecoder =
+    JD.at [ "dates", "calendars", "gregorian", "timeFormats" ]
+        (patternDecoder JD.string)
+
+
+dateTimePatternsDecoder : Decoder (Patterns String)
+dateTimePatternsDecoder =
+    JD.at [ "dates", "calendars", "gregorian", "dateTimeFormats" ]
         (patternDecoder JD.string)
 
 
@@ -75,6 +95,12 @@ weekdayNamesShortDecoder : Decoder WeekdayNames
 weekdayNamesShortDecoder =
     JD.at [ "dates", "calendars", "gregorian", "days", "format", "abbreviated" ]
         genericWeekdayNamesDecoder
+
+
+eraNamesDecoder : Decoder EraNames
+eraNamesDecoder =
+    JD.at [ "dates", "calendars", "gregorian", "eras", "eraAbbr" ]
+        genericEraNamesDecoder
 
 
 patternDecoder : Decoder a -> Decoder (Patterns a)
@@ -115,13 +141,21 @@ genericWeekdayNamesDecoder =
         |> JDPipe.required "sat" JD.string
 
 
+genericEraNamesDecoder : Decoder EraNames
+genericEraNamesDecoder =
+    JD.succeed EraNames
+        |> JDPipe.required "0" JD.string
+        |> JDPipe.required "1" JD.string
+
+
 snakeIdentifier : LanguageInfo -> String
-snakeIdentifier { language, script, territory } =
+snakeIdentifier { language, script, territory, variant } =
     String.join "_"
         (List.filterMap identity
             [ Just language
             , script
             , territory
+            , variant
             ]
         )
         |> fixReservedKeywords

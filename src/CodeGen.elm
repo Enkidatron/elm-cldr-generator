@@ -1,9 +1,11 @@
-module CodeGen exposing (localeFile, mainGeneratedFile)
+module CodeGen exposing (dateTimeFormatTokenListParser, localeFile, mainGeneratedFile)
 
 import Elm.CodeGen as Gen
 import Elm.Pretty
-import Internal.Structures exposing (MonthNames, Patterns, WeekdayNames, mapPattern)
+import Internal.Structures exposing (EraNames, MonthNames, Patterns, WeekdayNames)
 import LanguageInfo exposing (LanguageInfo, snakeIdentifier)
+import Parser exposing ((|.), (|=), Parser)
+import Set
 
 
 localeFile : String -> List LanguageInfo -> String
@@ -107,12 +109,17 @@ generatedLangExpression : LanguageInfo -> Gen.Expression
 generatedLangExpression info =
     Gen.record
         [ ( "languageId"
-          , Gen.apply
-                [ Gen.fun "Lang"
-                , taggedStringExpr info.language
-                , maybeTaggedStringExpr info.script
-                , maybeTaggedStringExpr info.territory
-                ]
+          , if info.language == "root" then
+                Gen.fun "Root"
+
+            else
+                Gen.apply
+                    [ Gen.fun "Lang"
+                    , taggedStringExpr info.language
+                    , maybeTaggedStringExpr info.script
+                    , maybeTaggedStringExpr info.territory
+                    , maybeTaggedStringExpr info.variant
+                    ]
           )
         , ( "amPmNames"
           , Gen.record
@@ -125,10 +132,10 @@ generatedLangExpression info =
         , ( "monthNamesShort", monthNamesExpr info.monthNamesShort )
         , ( "weekdayNames", weekdayNamesExpr info.weekdayNames )
         , ( "weekdayNamesShort", weekdayNamesExpr info.weekdayNamesShort )
-        , ( "dateTokens"
-          , weekdayNamesExpr dateFormatTokenListExpr
-                (mapPattern parseDateFormatTokenBestEffort info.dateFormats)
-          )
+        , ( "dateTokens", patternExpr dateFormatTokenBestEffortExpr info.datePatterns )
+        , ( "timeTokens", patternExpr dateFormatTokenBestEffortExpr info.timePatterns )
+        , ( "dateTimeTokens", patternExpr dateTimeTokenBestEffortExpr info.dateTimePatterns )
+        , ( "eraNames", eraNamesExpr info.eraNames )
         ]
 
 
@@ -195,4 +202,132 @@ weekdayNamesExpr names =
         , ( "thu", Gen.string names.thu )
         , ( "fri", Gen.string names.fri )
         , ( "sat", Gen.string names.sat )
+        ]
+
+
+eraNamesExpr : EraNames -> Gen.Expression
+eraNamesExpr names =
+    Gen.record
+        [ ( "bc", Gen.string names.bc )
+        , ( "ad", Gen.string names.ad )
+        ]
+
+
+dateFormatTokenBestEffortExpr : String -> Gen.Expression
+dateFormatTokenBestEffortExpr =
+    Parser.run dateTimeFormatTokenListParser
+        >> Result.map Gen.list
+        >> Result.withDefault (Gen.val "ERROR")
+
+
+dateTimeFormatTokenListParser : Parser (List Gen.Expression)
+dateTimeFormatTokenListParser =
+    Parser.succeed identity
+        |= Parser.sequence
+            { start = ""
+            , separator = ""
+            , end = ""
+            , spaces = Parser.succeed ()
+            , item = dateTimeFormatTokenParser
+            , trailing = Parser.Optional
+            }
+        |. Parser.end
+
+
+parseWord : String -> Gen.Expression -> Parser Gen.Expression
+parseWord word expr =
+    Parser.map (\_ -> expr) (Parser.symbol word)
+
+
+dateTimeFormatTokenParser : Parser Gen.Expression
+dateTimeFormatTokenParser =
+    let
+        parseToken : String -> String -> Parser Gen.Expression
+        parseToken word funName =
+            parseWord word (Gen.apply [ Gen.fun "DF", Gen.fun funName ])
+
+        textExpr : String -> Gen.Expression
+        textExpr word =
+            Gen.apply
+                [ Gen.fun "DF"
+                , Gen.parens (Gen.apply [ Gen.fun "text", Gen.string word ])
+                ]
+    in
+    Parser.oneOf
+        [ parseToken "dd" "dayOfMonthFixed"
+        , parseToken "d" "dayOfMonthNumber"
+        , parseToken "EEEE" "dayOfWeekNameFull"
+        , parseToken "cccc" "dayOfWeekNameFull"
+        , parseToken "MMMM" "monthNameFull"
+        , parseToken "MMM" "monthNameAbbreviated"
+        , parseToken "MM" "monthFixed"
+        , parseToken "M" "monthNumber"
+        , parseToken "y" "yearNumber"
+        , parseWord "G" (Gen.fun "EraAbbr")
+        , parseToken "HH" "hourMilitaryFixed"
+        , parseToken "H" "hourMilitaryNumber"
+        , parseToken "hh" "hourFixed"
+        , parseToken "h" "hourNumber"
+        , parseToken "mm" "minuteFixed"
+        , parseToken "m" "minuteNumber"
+        , parseToken "ss" "secondFixed"
+        , parseToken "s" "secondNumber"
+        , parseToken "a" "amPmUppercase"
+        , parseWord "zzzz" (Gen.fun "TimeZoneFull")
+        , parseWord "z" (Gen.fun "TimeZoneShort")
+        , parseWord "B" (textExpr "") -- "B" is "flexible day periods", which is beyond me at this time
+        , Parser.variable
+            { start = \c -> not (Char.isAlpha c) && c /= '\''
+            , inner = \c -> not (Char.isAlpha c) && c /= '\''
+            , reserved = Set.empty
+            }
+            |> Parser.map textExpr
+        , Parser.succeed textExpr
+            |. Parser.symbol "'"
+            |= Parser.getChompedString (Parser.chompUntil "'")
+            |. Parser.symbol "'"
+        ]
+
+
+dateTimeTokenBestEffortExpr : String -> Gen.Expression
+dateTimeTokenBestEffortExpr =
+    Parser.run dateTimeTokenListParser
+        >> Result.map Gen.list
+        >> Result.withDefault (Gen.val "ERROR")
+
+
+dateTimeTokenListParser : Parser (List Gen.Expression)
+dateTimeTokenListParser =
+    Parser.succeed identity
+        |= Parser.sequence
+            { start = ""
+            , separator = ""
+            , end = ""
+            , spaces = Parser.succeed ()
+            , item = dateTimeTokenParser
+            , trailing = Parser.Optional
+            }
+        |. Parser.end
+
+
+dateTimeTokenParser : Parser Gen.Expression
+dateTimeTokenParser =
+    let
+        textExpr : String -> Gen.Expression
+        textExpr word =
+            Gen.apply [ Gen.fun "Text", Gen.string word ]
+    in
+    Parser.oneOf
+        [ parseWord "{0}" (Gen.fun "DateGoesHere")
+        , parseWord "{1}" (Gen.fun "TimeGoesHere")
+        , Parser.variable
+            { start = \c -> not (Char.isAlpha c) && c /= '\'' && c /= '{'
+            , inner = \c -> not (Char.isAlpha c) && c /= '\'' && c /= '{'
+            , reserved = Set.empty
+            }
+            |> Parser.map textExpr
+        , Parser.succeed textExpr
+            |. Parser.symbol "'"
+            |= Parser.getChompedString (Parser.chompUntil "'")
+            |. Parser.symbol "'"
         ]
