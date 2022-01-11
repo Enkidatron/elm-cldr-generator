@@ -262,6 +262,7 @@ dateTimeFormatTokenParser =
         , parseToken "MMM" "monthNameAbbreviated"
         , parseToken "MM" "monthFixed"
         , parseToken "M" "monthNumber"
+        , parseToken "yy" "yearNumberLastTwo"
         , parseToken "y" "yearNumber"
         , parseWord "G" (Gen.fun "EraAbbr")
         , parseToken "HH" "hourMilitaryFixed"
@@ -318,8 +319,8 @@ dateTimeTokenParser =
             Gen.apply [ Gen.fun "Text", Gen.string word ]
     in
     Parser.oneOf
-        [ parseWord "{0}" (Gen.fun "DateGoesHere")
-        , parseWord "{1}" (Gen.fun "TimeGoesHere")
+        [ parseWord "{1}" (Gen.fun "DateGoesHere")
+        , parseWord "{0}" (Gen.fun "TimeGoesHere")
         , Parser.variable
             { start = \c -> not (Char.isAlpha c) && c /= '\'' && c /= '{'
             , inner = \c -> not (Char.isAlpha c) && c /= '\'' && c /= '{'
