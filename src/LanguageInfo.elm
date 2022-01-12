@@ -1,4 +1,4 @@
-module LanguageInfo exposing (LanguageInfo, decoder, snakeIdentifier)
+module LanguageInfo exposing (LanguageInfo, decoder, skewerCase, snakeIdentifier)
 
 import Internal.Structures exposing (AmPmNames, EraNames, MonthNames, Patterns, WeekdayNames)
 import Json.Decode as JD exposing (Decoder)
@@ -159,6 +159,18 @@ snakeIdentifier { language, script, territory, variant } =
             ]
         )
         |> fixReservedKeywords
+
+
+skewerCase : LanguageInfo -> String
+skewerCase { language, script, territory, variant } =
+    String.join "-"
+        (List.filterMap identity
+            [ Just language
+            , script
+            , territory
+            , variant
+            ]
+        )
 
 
 reservedWords : Set String

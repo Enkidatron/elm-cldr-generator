@@ -3,7 +3,7 @@ module CodeGen exposing (dateTimeFormatTokenListParser, localeFile, mainGenerate
 import Elm.CodeGen as Gen
 import Elm.Pretty
 import Internal.Structures exposing (EraNames, MonthNames, Patterns, WeekdayNames)
-import LanguageInfo exposing (LanguageInfo, snakeIdentifier)
+import LanguageInfo exposing (LanguageInfo, skewerCase, snakeIdentifier)
 import Parser exposing ((|.), (|=), Parser)
 import Set
 
@@ -40,7 +40,8 @@ localeFileComment langName infos =
 
 localeFileDeclaration : LanguageInfo -> Gen.Declaration
 localeFileDeclaration info =
-    Gen.funDecl Nothing
+    Gen.funDecl
+        (Just (commentForLanguage info))
         (Just (Gen.typed "Locale" []))
         (snakeIdentifier info)
         []
@@ -51,6 +52,36 @@ localeFileDeclaration info =
         )
 
 
+commentForLanguage : LanguageInfo -> Gen.Comment Gen.DocComment
+commentForLanguage info =
+    Gen.emptyDocComment
+        |> Gen.markdown
+            (String.concat
+                [ "The `Locale` for '"
+                , skewerCase info
+                , "'.\n\n"
+                , "Date format strings:"
+                , "\n- Short : "
+                , info.datePatterns.short
+                , "\n- Medium : "
+                , info.datePatterns.medium
+                , "\n- Long : "
+                , info.datePatterns.long
+                , "\n- Full : "
+                , info.datePatterns.full
+                , "\n\nTime format strings:"
+                , "\n- Short : "
+                , info.timePatterns.short
+                , "\n- Medium : "
+                , info.timePatterns.medium
+                , "\n- Long : "
+                , info.timePatterns.long
+                , "\n- Full : "
+                , info.timePatterns.full
+                ]
+            )
+
+
 mainGeneratedFile : List LanguageInfo -> String
 mainGeneratedFile infos =
     Gen.file
@@ -58,6 +89,7 @@ mainGeneratedFile infos =
             (infos
                 |> List.map snakeIdentifier
                 |> (::) "allLocales"
+                |> (::) "basicLocales"
                 |> List.map Gen.funExpose
             )
         )
@@ -81,6 +113,7 @@ mainGeneratedFile infos =
             )
         ]
         (allLocalesDeclaration infos
+            :: basicLocalesDeclaration infos
             :: List.map generatedLangDeclaration infos
         )
         Nothing
@@ -94,6 +127,25 @@ allLocalesDeclaration infos =
         "allLocales"
         []
         (Gen.list (List.map (snakeIdentifier >> Gen.val) infos))
+
+
+basicLocalesDeclaration : List LanguageInfo -> Gen.Declaration
+basicLocalesDeclaration infos =
+    Gen.funDecl Nothing
+        (Just (Gen.typed "List" [ Gen.typed "Internal" [] ]))
+        "basicLocales"
+        []
+        (Gen.list (List.filterMap (basicLanguage >> Maybe.map (snakeIdentifier >> Gen.val)) infos))
+
+
+basicLanguage : LanguageInfo -> Maybe LanguageInfo
+basicLanguage info =
+    case ( info.script, info.territory, info.variant ) of
+        ( Nothing, Nothing, Nothing ) ->
+            Just info
+
+        _ ->
+            Nothing
 
 
 generatedLangDeclaration : LanguageInfo -> Gen.Declaration
