@@ -33,6 +33,7 @@ program process =
         |> reportAndFilterErrors JD.errorToString
         |> log jsonDecodeSuccessMessage
         |> IO.map gatherByLanguage
+        |> log languageGroupMessage
         |> IO.andThen writeMainLocaleFile
         |> IO.map (always ())
         |> print ("Successfully wrote " ++ mainLocaleFileName)
@@ -125,6 +126,11 @@ gatherByLanguage =
     List.map Tuple.second
         >> List.Extra.gatherEqualsBy .language
         >> List.map (\( first, rest ) -> ( String.Extra.toTitleCase first.language, first :: rest ))
+
+
+languageGroupMessage : List a -> String
+languageGroupMessage grouped =
+    "Grouped locales into " ++ String.fromInt (List.length grouped) ++ " languages."
 
 
 writeMainLocaleFile : List ( String, List LanguageInfo ) -> IO (List ( String, List LanguageInfo ))
