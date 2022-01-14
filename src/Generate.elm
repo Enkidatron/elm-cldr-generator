@@ -28,11 +28,19 @@ program process =
         |> reportAndFilterErrors identity
         |> andThenHelp loadGregorianJson
         |> reportAndFilterErrors identity
+        |> log jsonLoadSuccessMessage
         |> mapHelp2 decodeFile
         |> reportAndFilterErrors JD.errorToString
+        |> log jsonDecodeSuccessMessage
         |> IO.map gatherByLanguage
         |> IO.andThen writeMainLocaleFile
         |> IO.map (always ())
+        |> print ("Successfully wrote " ++ mainLocaleFileName)
+        |> print "*Reminder*"
+        |> print "run these commands in `./elm-cldr` before committing to confirm everything worked properly:"
+        |> print "elm-verify-examples"
+        |> print "elm-test"
+        |> print "elm-format ./"
 
 
 andThenHelp : (a -> IO b) -> IO (List ( String, a )) -> IO (List ( String, b ))
@@ -82,14 +90,34 @@ checkIsDir entry =
             IO.return ( name, Err ("Unexpected other: " ++ name) )
 
 
+log : (a -> String) -> IO a -> IO a
+log toLogMessage =
+    IO.andThen (\a -> toLogMessage a |> Proc.print |> IO.map (always a))
+
+
+print : String -> IO a -> IO a
+print message =
+    IO.andThen (\a -> Proc.print message |> IO.map (always a))
+
+
 loadGregorianJson : String -> IO (Result String String)
 loadGregorianJson dir =
     File.contentsOf (String.join "/" [ baseDir, dir, "ca-gregorian.json" ])
 
 
+jsonLoadSuccessMessage : List a -> String
+jsonLoadSuccessMessage jsonContents =
+    "Successfully read " ++ String.fromInt (List.length jsonContents) ++ " ca-gregorian JSON files."
+
+
 decodeFile : String -> String -> Result JD.Error LanguageInfo
 decodeFile dirName contents =
     JD.decodeString (LanguageInfo.decoder dirName) contents
+
+
+jsonDecodeSuccessMessage : List a -> String
+jsonDecodeSuccessMessage infos =
+    "Successfully decoded " ++ String.fromInt (List.length infos) ++ " locales."
 
 
 gatherByLanguage : List ( String, LanguageInfo ) -> List ( String, List LanguageInfo )
