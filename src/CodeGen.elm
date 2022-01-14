@@ -1,4 +1,4 @@
-module CodeGen exposing (dateTimeFormatTokenListParser, localeFile, mainGeneratedFile)
+module CodeGen exposing (mainLocaleFile)
 
 import Elm.CodeGen as Gen
 import Elm.Pretty
@@ -8,89 +8,24 @@ import Parser exposing ((|.), (|=), Parser)
 import Set
 
 
-localeFile : String -> List LanguageInfo -> String
-localeFile langName infos =
+localeAnn : Gen.TypeAnnotation
+localeAnn =
+    Gen.typed "Locale" []
+
+
+mainLocaleFile : List ( String, List LanguageInfo ) -> String
+mainLocaleFile groupedInfos =
+    let
+        infos =
+            List.concatMap Tuple.second groupedInfos
+    in
     Gen.file
-        (Gen.normalModule [ "Cldr", "Locale", langName ]
-            (List.map (snakeIdentifier >> Gen.funExpose) infos)
-        )
-        [ Gen.importStmt [ "Internal", "Locale" ]
-            Nothing
-            (Just
-                (Gen.exposeExplicit
-                    [ Gen.openTypeExpose "Locale"
-                    ]
-                )
-            )
-        , Gen.importStmt [ "Internal", "Generated" ]
-            Nothing
-            Nothing
-        ]
-        (List.map localeFileDeclaration infos)
-        (Just (localeFileComment langName infos))
-        |> Elm.Pretty.pretty 80
-
-
-localeFileComment : String -> List LanguageInfo -> Gen.Comment Gen.FileComment
-localeFileComment langName infos =
-    Gen.emptyFileComment
-        |> Gen.markdown ("# Locales for the " ++ langName ++ " language")
-        |> Gen.docTags (List.map snakeIdentifier infos)
-
-
-localeFileDeclaration : LanguageInfo -> Gen.Declaration
-localeFileDeclaration info =
-    Gen.funDecl
-        (Just (commentForLanguage info))
-        (Just (Gen.typed "Locale" []))
-        (snakeIdentifier info)
-        []
-        (Gen.apply
-            [ Gen.fun "Locale"
-            , Gen.fqVal [ "Internal", "Generated" ] (snakeIdentifier info)
-            ]
-        )
-
-
-commentForLanguage : LanguageInfo -> Gen.Comment Gen.DocComment
-commentForLanguage info =
-    Gen.emptyDocComment
-        |> Gen.markdown
-            (String.concat
-                [ "The `Locale` for '"
-                , skewerCase info
-                , "'.\n\n"
-                , "Date format strings:"
-                , "\n- Short : "
-                , info.datePatterns.short
-                , "\n- Medium : "
-                , info.datePatterns.medium
-                , "\n- Long : "
-                , info.datePatterns.long
-                , "\n- Full : "
-                , info.datePatterns.full
-                , "\n\nTime format strings:"
-                , "\n- Short : "
-                , info.timePatterns.short
-                , "\n- Medium : "
-                , info.timePatterns.medium
-                , "\n- Long : "
-                , info.timePatterns.long
-                , "\n- Full : "
-                , info.timePatterns.full
-                ]
-            )
-
-
-mainGeneratedFile : List LanguageInfo -> String
-mainGeneratedFile infos =
-    Gen.file
-        (Gen.normalModule [ "Internal", "Generated" ]
+        (Gen.normalModule [ "Cldr", "Locale" ]
             (infos
                 |> List.map snakeIdentifier
-                |> (::) "allLocales"
-                |> (::) "basicLocales"
+                |> (++) [ "fromString", "allLocales", "basicLocales", "toUnicode" ]
                 |> List.map Gen.funExpose
+                |> (::) (Gen.closedTypeExpose "Locale")
             )
         )
         [ Gen.importStmt [ "DateFormat" ] Nothing (Just Gen.exposeAll)
@@ -112,30 +47,180 @@ mainGeneratedFile infos =
                 (Gen.exposeExplicit [ Gen.openTypeExpose "Tagged" ])
             )
         ]
-        (allLocalesDeclaration infos
-            :: basicLocalesDeclaration infos
-            :: List.map generatedLangDeclaration infos
-        )
-        Nothing
+        (mainLocaleDeclarations infos)
+        (Just (mainLocaleFileComment groupedInfos))
         |> Elm.Pretty.pretty 80
 
 
-allLocalesDeclaration : List LanguageInfo -> Gen.Declaration
-allLocalesDeclaration infos =
-    Gen.funDecl Nothing
-        (Just (Gen.typed "List" [ Gen.typed "Internal" [] ]))
+mainLocaleFileComment : List ( String, List LanguageInfo ) -> Gen.Comment Gen.FileComment
+mainLocaleFileComment groupedInfos =
+    Gen.emptyFileComment
+        |> Gen.markdown "# Locale"
+        |> Gen.docTags [ "Locale" ]
+        |> Gen.markdown "## Create"
+        |> Gen.docTags [ "fromString" ]
+        |> Gen.markdown ""
+        |> Gen.docTags [ "allLocales, basicLocales" ]
+        |> Gen.markdown "## Convert"
+        |> Gen.docTags [ "toUnicode" ]
+        |> Gen.markdown "## Locales by language"
+        |> (\comment -> List.foldl addDocForLangGroup comment groupedInfos)
+
+
+addDocForLangGroup : ( String, List LanguageInfo ) -> Gen.Comment Gen.FileComment -> Gen.Comment Gen.FileComment
+addDocForLangGroup ( langTag, infos ) =
+    Gen.markdown ("### " ++ langTag)
+        >> Gen.docTags (List.map snakeIdentifier infos)
+
+
+mainLocaleDeclarations : List LanguageInfo -> List Gen.Declaration
+mainLocaleDeclarations infos =
+    [ localeTypeDeclaration
+    , toUnicodeDeclaration
+    , fromStringDeclaration
+    , allLocalesDeclarationForMainLocale infos
+    , basicLocalesDeclarationForMainLocale infos
+    ]
+        ++ List.map localeFileDeclaration infos
+
+
+localeTypeDeclaration : Gen.Declaration
+localeTypeDeclaration =
+    Gen.aliasDecl
+        (Just
+            (Gen.emptyDocComment
+                |> Gen.markdown "Represents the locale to use for formatting."
+                |> Gen.markdown "You can parse a value from JS like `navigator.language` or use hardcoded locales."
+            )
+        )
+        "Locale"
+        []
+        (Gen.fqTyped [ "Internal", "Locale" ] "Locale" [])
+
+
+toUnicodeDeclaration : Gen.Declaration
+toUnicodeDeclaration =
+    Gen.funDecl (Just toUnicodeDocComment)
+        (Just (Gen.funAnn localeAnn Gen.stringAnn))
+        "toUnicode"
+        [ Gen.varPattern "locale" ]
+        (Gen.apply
+            [ Gen.fqFun [ "Internal", "Locale" ] "toUnicode"
+            , Gen.val "locale"
+            ]
+        )
+
+
+toUnicodeDocComment : Gen.Comment Gen.DocComment
+toUnicodeDocComment =
+    Gen.emptyDocComment
+        |> Gen.markdown "Get the [Unicode](https://unicode.org/reports/tr35/#Identifiers) representation of a locale."
+        |> Gen.code "toUnicode en_GB"
+        |> Gen.code "--> \"en-GB\""
+
+
+fromStringDeclaration : Gen.Declaration
+fromStringDeclaration =
+    Gen.funDecl (Just fromStringDocComment)
+        (Just (Gen.funAnn (Gen.listAnn localeAnn) (Gen.funAnn Gen.stringAnn (Gen.maybeAnn localeAnn))))
+        "fromString"
+        [ Gen.varPattern "candidateLocales" ]
+        (Gen.chain
+            (Gen.fqFun [ "Internal", "Locale" ] "languageIdFromString")
+            [ Gen.apply
+                [ Gen.fqFun [ "Maybe" ] "andThen"
+                , Gen.parens
+                    (Gen.apply
+                        [ Gen.fqFun [ "Internal", "Locale" ] "matchNearestLocale"
+                        , Gen.val "candidateLocales"
+                        ]
+                    )
+                ]
+            ]
+        )
+
+
+fromStringDocComment : Gen.Comment Gen.DocComment
+fromStringDocComment =
+    Gen.emptyDocComment
+        |> Gen.markdown "Parse a `Locale` from a Unicode or BCP47 identifier."
+        |> Gen.code "fromString basicLocales \"en\""
+        |> Gen.code "--> Just en"
+        |> Gen.code ""
+        |> Gen.code "fromString allLocales \"en-GB\""
+        |> Gen.code "--> Just en_GB"
+
+
+allLocalesDeclarationForMainLocale : List LanguageInfo -> Gen.Declaration
+allLocalesDeclarationForMainLocale infos =
+    Gen.funDecl (Just allLocalesDocComment)
+        (Just (Gen.listAnn localeAnn))
         "allLocales"
         []
         (Gen.list (List.map (snakeIdentifier >> Gen.val) infos))
 
 
-basicLocalesDeclaration : List LanguageInfo -> Gen.Declaration
-basicLocalesDeclaration infos =
-    Gen.funDecl Nothing
-        (Just (Gen.typed "List" [ Gen.typed "Internal" [] ]))
+allLocalesDocComment : Gen.Comment Gen.DocComment
+allLocalesDocComment =
+    Gen.emptyDocComment
+        |> Gen.markdown "A list of every locale listed in the JSON version of the CLDR."
+
+
+basicLocalesDeclarationForMainLocale : List LanguageInfo -> Gen.Declaration
+basicLocalesDeclarationForMainLocale infos =
+    Gen.funDecl (Just basicLocalesDocComment)
+        (Just (Gen.listAnn localeAnn))
         "basicLocales"
         []
         (Gen.list (List.filterMap (basicLanguage >> Maybe.map (snakeIdentifier >> Gen.val)) infos))
+
+
+basicLocalesDocComment : Gen.Comment Gen.DocComment
+basicLocalesDocComment =
+    Gen.emptyDocComment
+        |> Gen.markdown "A list of every \"basic\" locale listed in the JSON version of the CLDR."
+        |> Gen.markdown "A \"basic\" locale is a locale without a region, script, or variant subtag, such as `en` or `ru`."
+
+
+localeFileDeclaration : LanguageInfo -> Gen.Declaration
+localeFileDeclaration info =
+    Gen.funDecl
+        (Just (commentForLanguage info))
+        (Just (Gen.typed "Locale" []))
+        (snakeIdentifier info)
+        []
+        (Gen.apply
+            [ Gen.fqFun [ "Internal", "Locale" ] "Locale"
+            , generatedLangExpression info
+            ]
+        )
+
+
+commentForLanguage : LanguageInfo -> Gen.Comment Gen.DocComment
+commentForLanguage info =
+    Gen.emptyDocComment
+        |> Gen.markdown
+            (String.concat
+                [ "Date format strings:"
+                , "\n- Short : "
+                , info.datePatterns.short
+                , "\n- Medium : "
+                , info.datePatterns.medium
+                , "\n- Long : "
+                , info.datePatterns.long
+                , "\n- Full : "
+                , info.datePatterns.full
+                , "\n\nTime format strings:"
+                , "\n- Short : "
+                , info.timePatterns.short
+                , "\n- Medium : "
+                , info.timePatterns.medium
+                , "\n- Long : "
+                , info.timePatterns.long
+                , "\n- Full : "
+                , info.timePatterns.full
+                ]
+            )
 
 
 basicLanguage : LanguageInfo -> Maybe LanguageInfo
@@ -146,15 +231,6 @@ basicLanguage info =
 
         _ ->
             Nothing
-
-
-generatedLangDeclaration : LanguageInfo -> Gen.Declaration
-generatedLangDeclaration info =
-    Gen.funDecl Nothing
-        (Just (Gen.typed "Internal" []))
-        (snakeIdentifier info)
-        []
-        (generatedLangExpression info)
 
 
 generatedLangExpression : LanguageInfo -> Gen.Expression

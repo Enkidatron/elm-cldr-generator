@@ -15,14 +15,9 @@ baseDir =
     "./cldr-json/cldr-json/cldr-dates-modern/main"
 
 
-localeFileDir : String
-localeFileDir =
-    "./elm-cldr/src/Cldr/Locale/"
-
-
-mainGeneratedFileName : String
-mainGeneratedFileName =
-    "./elm-cldr/src/Internal/Generated.elm"
+mainLocaleFileName : String
+mainLocaleFileName =
+    "./elm-cldr/src/Cldr/Locale.elm"
 
 
 program : Process -> IO ()
@@ -36,9 +31,8 @@ program process =
         |> mapHelp2 decodeFile
         |> reportAndFilterErrors JD.errorToString
         |> IO.map gatherByLanguage
-        |> andThenHelp2 writeLocaleFile
-        |> IO.map (List.concatMap Tuple.second)
-        |> IO.andThen writeMainGeneratedFile
+        |> IO.andThen writeMainLocaleFile
+        |> IO.map (always ())
 
 
 andThenHelp : (a -> IO b) -> IO (List ( String, a )) -> IO (List ( String, b ))
@@ -105,18 +99,11 @@ gatherByLanguage =
         >> List.map (\( first, rest ) -> ( String.Extra.toTitleCase first.language, first :: rest ))
 
 
-writeLocaleFile : String -> List LanguageInfo -> IO (List LanguageInfo)
-writeLocaleFile langFileName infos =
-    File.writeContentsTo
-        (localeFileDir ++ langFileName ++ ".elm")
-        (CodeGen.localeFile langFileName infos)
+writeMainLocaleFile : List ( String, List LanguageInfo ) -> IO (List ( String, List LanguageInfo ))
+writeMainLocaleFile infos =
+    File.writeContentsTo mainLocaleFileName
+        (CodeGen.mainLocaleFile infos)
         |> IO.map (always infos)
-
-
-writeMainGeneratedFile : List LanguageInfo -> IO ()
-writeMainGeneratedFile infos =
-    File.writeContentsTo mainGeneratedFileName
-        (CodeGen.mainGeneratedFile infos)
 
 
 reportAndFilterErrors : (e -> String) -> IO (List ( String, Result e a )) -> IO (List ( String, a ))
