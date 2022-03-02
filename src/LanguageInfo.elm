@@ -1,6 +1,6 @@
 module LanguageInfo exposing (LanguageInfo, decoder, skewerCase, snakeIdentifier)
 
-import Internal.Structures exposing (AmPmNames, EraNames, MonthNames, Patterns, WeekdayNames)
+import Internal.Structures exposing (EraNames, MonthNames, Pattern3, Patterns, PeriodNames, WeekdayNames)
 import Json.Decode as JD exposing (Decoder)
 import Json.Decode.Pipeline as JDPipe
 import Set exposing (Set)
@@ -11,15 +11,17 @@ type alias LanguageInfo =
     , script : Maybe String
     , territory : Maybe String
     , variant : Maybe String
-    , amPmNames : AmPmNames
+    , periodNames : Pattern3 PeriodNames
     , datePatterns : Patterns String
-    , monthNames : MonthNames
-    , monthNamesShort : MonthNames
-    , weekdayNames : WeekdayNames
-    , weekdayNamesShort : WeekdayNames
-    , eraNames : EraNames
+    , monthFormatNames : Pattern3 MonthNames
+    , monthStandaloneNames : Pattern3 MonthNames
+    , weekdayFormatNames : Pattern3 WeekdayNames
+    , weekdayStandaloneNames : Pattern3 WeekdayNames
+    , eraNames : Pattern3 EraNames
     , timePatterns : Patterns String
     , dateTimePatterns : Patterns String
+    , availableFormats : List ( String, String )
+    , timeSkeletons : Patterns String
     }
 
 
@@ -35,24 +37,31 @@ languageInfoDecoder =
         |> JDPipe.optionalAt [ "identity", "script" ] (JD.nullable JD.string) Nothing
         |> JDPipe.optionalAt [ "identity", "territory" ] (JD.nullable JD.string) Nothing
         |> JDPipe.optionalAt [ "identity", "variant" ] (JD.nullable JD.string) Nothing
-        |> JDPipe.custom amPmNamesDecoder
+        |> JDPipe.custom periodNamesDecoder
         |> JDPipe.custom datePatternsDecoder
-        |> JDPipe.custom monthNamesDecoder
-        |> JDPipe.custom monthNamesShortDecoder
-        |> JDPipe.custom weekdayNamesDecoder
-        |> JDPipe.custom weekdayNamesShortDecoder
+        |> JDPipe.custom monthFormatNamesDecoder
+        |> JDPipe.custom monthStandaloneNamesDecoder
+        |> JDPipe.custom weekdayFormatNamesDecoder
+        |> JDPipe.custom weekdayStandaloneNamesDecoder
         |> JDPipe.custom eraNamesDecoder
         |> JDPipe.custom timePatternsDecoder
         |> JDPipe.custom dateTimePatternsDecoder
+        |> JDPipe.custom availableFormatsDecoder
+        |> JDPipe.custom timeSkeletonsDecoder
 
 
-amPmNamesDecoder : Decoder AmPmNames
-amPmNamesDecoder =
-    JD.at [ "dates", "calendars", "gregorian", "dayPeriods", "format", "abbreviated" ]
-        (JD.succeed AmPmNames
-            |> JDPipe.required "am" JD.string
-            |> JDPipe.required "pm" JD.string
-        )
+periodNamesDecoder : Decoder (Pattern3 PeriodNames)
+periodNamesDecoder =
+    JD.at [ "dates", "calendars", "gregorian", "dayPeriods", "format" ]
+        (pattern3Decoder genericPeriodNamesDecoder)
+
+
+genericPeriodNamesDecoder : Decoder PeriodNames
+genericPeriodNamesDecoder =
+    JD.succeed PeriodNames
+        |> JDPipe.required "am" JD.string
+        |> JDPipe.required "pm" JD.string
+        |> JDPipe.custom (JD.dict JD.string)
 
 
 datePatternsDecoder : Decoder (Patterns String)
@@ -73,34 +82,49 @@ dateTimePatternsDecoder =
         (patternDecoder JD.string)
 
 
-monthNamesDecoder : Decoder MonthNames
-monthNamesDecoder =
-    JD.at [ "dates", "calendars", "gregorian", "months", "format", "wide" ]
-        genericMonthNamesDecoder
+availableFormatsDecoder : Decoder (List ( String, String ))
+availableFormatsDecoder =
+    JD.at [ "dates", "calendars", "gregorian", "dateTimeFormats", "availableFormats" ]
+        (JD.keyValuePairs JD.string)
 
 
-monthNamesShortDecoder : Decoder MonthNames
-monthNamesShortDecoder =
-    JD.at [ "dates", "calendars", "gregorian", "months", "format", "abbreviated" ]
-        genericMonthNamesDecoder
+timeSkeletonsDecoder : Decoder (Patterns String)
+timeSkeletonsDecoder =
+    JD.at [ "dates", "calendars", "gregorian", "timeSkeletons" ]
+        (patternDecoder JD.string)
 
 
-weekdayNamesDecoder : Decoder WeekdayNames
-weekdayNamesDecoder =
-    JD.at [ "dates", "calendars", "gregorian", "days", "format", "wide" ]
-        genericWeekdayNamesDecoder
+monthFormatNamesDecoder : Decoder (Pattern3 MonthNames)
+monthFormatNamesDecoder =
+    JD.at [ "dates", "calendars", "gregorian", "months", "format" ]
+        (pattern3Decoder genericMonthNamesDecoder)
 
 
-weekdayNamesShortDecoder : Decoder WeekdayNames
-weekdayNamesShortDecoder =
-    JD.at [ "dates", "calendars", "gregorian", "days", "format", "abbreviated" ]
-        genericWeekdayNamesDecoder
+monthStandaloneNamesDecoder : Decoder (Pattern3 MonthNames)
+monthStandaloneNamesDecoder =
+    JD.at [ "dates", "calendars", "gregorian", "months", "stand-alone" ]
+        (pattern3Decoder genericMonthNamesDecoder)
 
 
-eraNamesDecoder : Decoder EraNames
+weekdayFormatNamesDecoder : Decoder (Pattern3 WeekdayNames)
+weekdayFormatNamesDecoder =
+    JD.at [ "dates", "calendars", "gregorian", "days", "format" ]
+        (pattern3Decoder genericWeekdayNamesDecoder)
+
+
+weekdayStandaloneNamesDecoder : Decoder (Pattern3 WeekdayNames)
+weekdayStandaloneNamesDecoder =
+    JD.at [ "dates", "calendars", "gregorian", "days", "stand-alone" ]
+        (pattern3Decoder genericWeekdayNamesDecoder)
+
+
+eraNamesDecoder : Decoder (Pattern3 EraNames)
 eraNamesDecoder =
-    JD.at [ "dates", "calendars", "gregorian", "eras", "eraAbbr" ]
-        genericEraNamesDecoder
+    JD.at [ "dates", "calendars", "gregorian", "eras" ] <|
+        JD.map3 Pattern3
+            (JD.field "eraAbbr" genericEraNamesDecoder)
+            (JD.field "eraNames" genericEraNamesDecoder)
+            (JD.field "eraNarrow" genericEraNamesDecoder)
 
 
 patternDecoder : Decoder a -> Decoder (Patterns a)
@@ -110,6 +134,14 @@ patternDecoder innerDecoder =
         |> JDPipe.required "medium" innerDecoder
         |> JDPipe.required "long" innerDecoder
         |> JDPipe.required "full" innerDecoder
+
+
+pattern3Decoder : Decoder a -> Decoder (Pattern3 a)
+pattern3Decoder innerDecoder =
+    JD.succeed Pattern3
+        |> JDPipe.required "abbreviated" innerDecoder
+        |> JDPipe.required "wide" innerDecoder
+        |> JDPipe.required "narrow" innerDecoder
 
 
 genericMonthNamesDecoder : Decoder MonthNames
