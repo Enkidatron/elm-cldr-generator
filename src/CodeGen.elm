@@ -1,4 +1,17 @@
-module CodeGen exposing (formatSymbolParser, languageFile, mainLocaleFile, symbolListParserHelper, withLiteralParser)
+module CodeGen exposing
+    ( dateSymbolParser
+    , dateTimeTokenParser
+    , formatSymbolParser
+    , isSupportedKey
+    , languageFile
+    , languageFileAlt
+    , mainLocaleFile
+    , mainLocaleFileAlt
+    , parseOptionsFromAvailableFormatKey
+    , symbolListParserHelper
+    , timeSymbolParser
+    , withLiteralParser
+    )
 
 import Cldr.Format.Options exposing (DateOptions, DateTimeOptions, FractionalDigits(..), HourType(..), NameOption(..), NumberOption(..), NumberOrTextOption(..), TextOption(..))
 import CodeGen.FormatSymbols
@@ -24,6 +37,11 @@ localeAnn =
 langModule : String -> Gen.ModuleName
 langModule lang =
     [ "Generated", String.Extra.toTitleCase lang ]
+
+
+langModuleAlt : String -> Gen.ModuleName
+langModuleAlt lang =
+    [ "Generated", "Alt", String.Extra.toTitleCase lang ]
 
 
 languageFile : String -> DayPeriodsInfo -> List LanguageInfo -> String
@@ -53,6 +71,40 @@ languageFile lang dayPeriods infos =
         ]
         (List.map (localeFileDeclaration dayPeriods) infos
             ++ dayPeriodRuleDeclarations lang dayPeriods
+        )
+        Nothing
+        |> Elm.Pretty.pretty 80
+
+
+languageFileAlt : String -> DayPeriodsInfo -> List LanguageInfo -> String
+languageFileAlt lang dayPeriods infos =
+    Gen.file
+        (Gen.normalModule (langModuleAlt lang)
+            (List.map (snakeIdentifier >> Gen.funExpose) infos)
+        )
+        [ Gen.importStmt [ "Cldr", "Format", "Options" ] (Just [ "Opts" ]) Nothing
+        , Gen.importStmt [ "Dict" ] Nothing (Just (Gen.exposeExplicit [ Gen.closedTypeExpose "Dict" ]))
+        , Gen.importStmt [ "Internal", "DayPeriodRule" ] Nothing Nothing
+        , Gen.importStmt [ "Internal", "Parse" ] Nothing Nothing
+        , Gen.importStmt [ "Internal", "LanguageInfo" ] Nothing Nothing
+        , Gen.importStmt [ "Internal", "FormatSymbols" ] (Just [ "Sym" ]) Nothing
+        , Gen.importStmt [ "Internal", "Locale" ]
+            Nothing
+            (Just
+                (Gen.exposeExplicit
+                    [ Gen.openTypeExpose "DateTimeToken"
+                    , Gen.openTypeExpose "LanguageId"
+                    ]
+                )
+            )
+        , Gen.importStmt [ "Tagged" ]
+            Nothing
+            (Just
+                (Gen.exposeExplicit [ Gen.openTypeExpose "Tagged" ])
+            )
+        ]
+        (dayPeriodRuleDeclarationAlt lang dayPeriods
+            :: List.map localeFileDeclarationAlt infos
         )
         Nothing
         |> Elm.Pretty.pretty 80
@@ -95,6 +147,43 @@ mainLocaleFile groupedInfos =
         |> Elm.Pretty.pretty 80
 
 
+mainLocaleFileAlt : List ( String, List LanguageInfo ) -> String
+mainLocaleFileAlt groupedInfos =
+    let
+        infos =
+            List.concatMap Tuple.second groupedInfos
+    in
+    Gen.file
+        (Gen.normalModule [ "Cldr", "LocaleAlt" ]
+            (infos
+                |> List.map snakeIdentifier
+                |> (++) [ "fromString", "allLocales", "basicLocales", "toUnicode" ]
+                |> List.map Gen.funExpose
+                |> (::) (Gen.closedTypeExpose "Locale")
+            )
+        )
+        ([ Gen.importStmt [ "Internal", "Locale" ]
+            Nothing
+            (Just
+                (Gen.exposeExplicit
+                    [ Gen.openTypeExpose "DateTimeToken"
+                    , Gen.openTypeExpose "LanguageId"
+                    ]
+                )
+            )
+         , Gen.importStmt [ "Tagged" ]
+            Nothing
+            (Just
+                (Gen.exposeExplicit [ Gen.openTypeExpose "Tagged" ])
+            )
+         ]
+            ++ List.map (Tuple.first >> generatedImportAlt) groupedInfos
+        )
+        (mainLocaleDeclarations infos)
+        (Just (mainLocaleFileComment groupedInfos))
+        |> Elm.Pretty.pretty 80
+
+
 mainLocaleFileComment : List ( String, List LanguageInfo ) -> Gen.Comment Gen.FileComment
 mainLocaleFileComment groupedInfos =
     Gen.emptyFileComment
@@ -118,7 +207,12 @@ addDocForLangGroup ( langTag, infos ) =
 
 generatedImport : String -> Gen.Import
 generatedImport lang =
-    Gen.importStmt [ "Generated", lang ] Nothing Nothing
+    Gen.importStmt [ "Generated", lang ] (Just [ lang ]) Nothing
+
+
+generatedImportAlt : String -> Gen.Import
+generatedImportAlt lang =
+    Gen.importStmt [ "Generated", "Alt", lang ] (Just [ lang ]) Nothing
 
 
 mainLocaleDeclarations : List LanguageInfo -> List Gen.Declaration
@@ -237,7 +331,7 @@ localeInMainFileDeclaration info =
         (Just (Gen.typed "Locale" []))
         (snakeIdentifier info)
         []
-        (Gen.fqVal (langModule info.language)
+        (Gen.fqVal [ String.Extra.toTitleCase info.language ]
             (snakeIdentifier info)
         )
 
@@ -252,6 +346,26 @@ localeFileDeclaration dayPeriods info =
         (Gen.apply
             [ Gen.fqFun [ "Internal", "Locale" ] "Locale"
             , generatedLangExpression dayPeriods info
+            ]
+        )
+
+
+localeFileDeclarationAlt : LanguageInfo -> Gen.Declaration
+localeFileDeclarationAlt info =
+    Gen.valDecl
+        (Just (commentForLanguage info))
+        (Just (Gen.fqTyped [ "Internal", "Locale" ] "Locale" []))
+        (snakeIdentifier info)
+        (Gen.apply
+            [ Gen.fqFun [ "Maybe" ] "withDefault"
+            , Gen.fqVal [ "Internal", "LanguageInfo" ] "empty"
+            , Gen.parens
+                (Gen.apply
+                    [ Gen.fqFun [ "Internal", "Parse" ] "parse"
+                    , Gen.val "dayPeriods"
+                    , generatedLangExpressionAlt info
+                    ]
+                )
             ]
         )
 
@@ -293,6 +407,27 @@ basicLanguage info =
             Nothing
 
 
+generatedLangExpressionAlt : LanguageInfo -> Gen.Expression
+generatedLangExpressionAlt info =
+    Gen.record
+        [ ( "language", Gen.string info.language )
+        , ( "script", maybeExpr Gen.string info.script )
+        , ( "territory", maybeExpr Gen.string info.territory )
+        , ( "variant", maybeExpr Gen.string info.variant )
+        , ( "periodNames", pattern3Expr periodNamesExpr info.periodNames )
+        , ( "datePatterns", patternExpr Gen.string info.datePatterns )
+        , ( "monthFormatNames", pattern3Expr monthNamesExpr info.monthFormatNames )
+        , ( "monthStandaloneNames", pattern3Expr monthNamesExpr info.monthStandaloneNames )
+        , ( "weekdayFormatNames", pattern3Expr weekdayNamesExpr info.weekdayFormatNames )
+        , ( "weekdayStandaloneNames", pattern3Expr weekdayNamesExpr info.weekdayStandaloneNames )
+        , ( "eraNames", pattern3Expr eraNamesExpr info.eraNames )
+        , ( "timePatterns", patternExpr Gen.string info.timePatterns )
+        , ( "dateTimePatterns", patternExpr Gen.string info.dateTimePatterns )
+        , ( "availableFormats", Gen.list (List.map (\( k, v ) -> Gen.tuple [ Gen.string k, Gen.string v ]) info.availableFormats) )
+        , ( "timeSkeletons", patternExpr Gen.string info.timeSkeletons )
+        ]
+
+
 generatedLangExpression : DayPeriodsInfo -> LanguageInfo -> Gen.Expression
 generatedLangExpression dayPeriods info =
     Gen.record
@@ -322,6 +457,35 @@ generatedLangExpression dayPeriods info =
         , ( "availableFormats", availableFormatListExpr info.availableFormats )
         , ( "hour12ByDefault", hour12ByDefaultExpr info.timeSkeletons )
         ]
+
+
+dayPeriodRuleDeclarationAlt : String -> DayPeriodsInfo -> Gen.Declaration
+dayPeriodRuleDeclarationAlt lang dayPeriods =
+    let
+        getSimpleLang : String -> String
+        getSimpleLang =
+            String.split "-" >> List.head >> Maybe.withDefault ""
+
+        lowerLang =
+            String.toLower lang
+    in
+    Gen.valDecl Nothing
+        (Just (Gen.typed "Dict" [ Gen.typed "String" [], Gen.typed "List" [ Gen.fqTyped [ "Internal", "DayPeriodRule" ] "DayPeriodRule" [] ] ]))
+        "dayPeriods"
+        (Gen.apply
+            [ Gen.fqFun [ "Dict" ] "fromList"
+            , Dict.toList dayPeriods
+                |> List.filter (Tuple.first >> getSimpleLang >> (==) lowerLang)
+                |> List.map
+                    (\( ruleLangTag, rules ) ->
+                        Gen.tuple
+                            [ Gen.string (String.Extra.underscored ruleLangTag)
+                            , Gen.list (List.map dayPeriodRuleExpr rules)
+                            ]
+                    )
+                |> Gen.list
+            ]
+        )
 
 
 dayPeriodRuleDeclarations : String -> DayPeriodsInfo -> List Gen.Declaration
@@ -763,7 +927,6 @@ timeSymbolParser =
         , parseWord "vvvv" (Sym.ZoneGenericNonLocationFormat Sym.Long)
         , parseWord "v" (Sym.ZoneGenericNonLocationFormat Sym.Short)
         ]
-
 
 
 dateTimeTokenBestEffortExpr : String -> Gen.Expression

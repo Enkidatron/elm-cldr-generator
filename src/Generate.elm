@@ -27,6 +27,11 @@ mainLocaleFileName =
     "./elm-cldr/src/Cldr/Locale.elm"
 
 
+mainLocaleFileNameAlt : String
+mainLocaleFileNameAlt =
+    "./elm-cldr/src/Cldr/LocaleAlt.elm"
+
+
 generatedDirName : String
 generatedDirName =
     "./elm-cldr/src/Generated"
@@ -35,6 +40,11 @@ generatedDirName =
 languageFileName : String -> String
 languageFileName language =
     "./elm-cldr/src/Generated/" ++ String.Extra.toTitleCase language ++ ".elm"
+
+
+languageFileNameAlt : String -> String
+languageFileNameAlt language =
+    "./elm-cldr/src/Generated/Alt/" ++ String.Extra.toTitleCase language ++ ".elm"
 
 
 program : Process -> IO ()
@@ -197,6 +207,11 @@ writeLanguageBundleFile : DayPeriodsInfo -> String -> List LanguageInfo -> IO ()
 writeLanguageBundleFile dayPeriods languageTag infos =
     File.writeContentsTo (languageFileName languageTag)
         (CodeGen.languageFile languageTag dayPeriods infos)
+        |> IO.andThen
+            (\_ ->
+                File.writeContentsTo (languageFileNameAlt languageTag)
+                    (CodeGen.languageFileAlt languageTag dayPeriods infos)
+            )
 
 
 languageFileWriteSuccessMessage : List a -> String
@@ -208,6 +223,11 @@ writeMainLocaleFile : List ( String, List LanguageInfo ) -> IO (List ( String, L
 writeMainLocaleFile infos =
     File.writeContentsTo mainLocaleFileName
         (CodeGen.mainLocaleFile infos)
+        |> IO.andThen
+            (\_ ->
+                File.writeContentsTo mainLocaleFileNameAlt
+                    (CodeGen.mainLocaleFileAlt infos)
+            )
         |> IO.map (always infos)
 
 
