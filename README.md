@@ -7,3 +7,10 @@ It contains [enkidatron/elm-cldr][elm-cldr] and the JSON release of Unicode's [C
 [elm-cldr]: https://github.com/enkidatron/elm-cldr
 [cldr]: https://cldr.unicode.org/index
 [elm-posix]: https://package.elm-lang.org/packages/albertdahlin/elm-posix/latest/
+
+## Generate elm-cldr
+
+To generate elm-cldr from the current `cldr-json`, run: 
+```bash
+elm-cli run src/Generate.elm
+```
