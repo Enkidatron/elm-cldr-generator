@@ -1,9 +1,10 @@
-module Generate exposing (program)
+module GenerateCldr exposing (program)
 
 import CodeGen
 import DayPeriodsInfo exposing (DayPeriodsInfo)
+import Internal.LanguageInfo exposing (LanguageInfo)
 import Json.Decode as JD
-import LanguageInfo exposing (LanguageInfo)
+import LanguageInfo.Extra
 import List.Extra
 import Posix.IO as IO exposing (IO, Process)
 import Posix.IO.File as File
@@ -173,7 +174,7 @@ jsonLoadSuccessMessage jsonContents =
 
 decodeFile : String -> String -> Result JD.Error LanguageInfo
 decodeFile dirName contents =
-    JD.decodeString (LanguageInfo.decoder dirName) contents
+    JD.decodeString (LanguageInfo.Extra.decoder dirName) contents
 
 
 jsonDecodeSuccessMessage : List a -> String

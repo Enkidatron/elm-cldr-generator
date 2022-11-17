@@ -1,28 +1,10 @@
-module LanguageInfo exposing (LanguageInfo, decoder, skewerCase, snakeIdentifier)
+module LanguageInfo.Extra exposing (decoder, skewerCase, snakeIdentifier)
 
+import Internal.LanguageInfo exposing (LanguageInfo)
 import Internal.Structures exposing (EraNames, MonthNames, Pattern3, Patterns, PeriodNames, WeekdayNames)
 import Json.Decode as JD exposing (Decoder)
 import Json.Decode.Pipeline as JDPipe
 import Set exposing (Set)
-
-
-type alias LanguageInfo =
-    { language : String
-    , script : Maybe String
-    , territory : Maybe String
-    , variant : Maybe String
-    , periodNames : Pattern3 PeriodNames
-    , datePatterns : Patterns String
-    , monthFormatNames : Pattern3 MonthNames
-    , monthStandaloneNames : Pattern3 MonthNames
-    , weekdayFormatNames : Pattern3 WeekdayNames
-    , weekdayStandaloneNames : Pattern3 WeekdayNames
-    , eraNames : Pattern3 EraNames
-    , timePatterns : Patterns String
-    , dateTimePatterns : Patterns String
-    , availableFormats : List ( String, String )
-    , timeSkeletons : Patterns String
-    }
 
 
 decoder : String -> Decoder LanguageInfo

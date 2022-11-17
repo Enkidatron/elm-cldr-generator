@@ -1,0 +1,16 @@
+{
+    "elm-codegen-version": "0.2.0",
+    "codegen-helpers": {
+        "packages": {
+            "elm/core": "1.0.5"
+        },
+        "local": [
+            "elm-cldr/src/Internal/DayPeriodRule.elm",
+            "elm-cldr/src/Internal/Locale.elm",
+            "elm-cldr/src/Internal/Parse.elm",
+            "elm-cldr/src/Internal/Structures.elm",
+            "elm-cldr/src/Internal/Locale.elm",
+            "elm-cldr/src/Internal/LanguageInfo.elm"
+        ]
+    }
+}
