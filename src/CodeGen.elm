@@ -18,6 +18,7 @@ import Gen.Internal.Structures
 import Gen.Maybe
 import Internal.DayPeriodRule exposing (DayPeriodRule)
 import Internal.LanguageInfo exposing (LanguageInfo)
+import Internal.LanguageInfo.Encode
 import Internal.Options exposing (MinimalOptionSet(..))
 import Internal.Structures exposing (EraNames, MonthNames, Pattern3, Patterns, PeriodNames, WeekdayNames)
 import LanguageInfo.Extra exposing (snakeIdentifier)
@@ -212,7 +213,7 @@ localeFileDeclaration info =
         Gen.Internal.Locale.empty
         (Gen.Internal.Parse.parse
             (Elm.val "dayPeriods")
-            (generatedLangExpression info)
+            (Internal.LanguageInfo.Encode.encode (Internal.LanguageInfo.compact info))
         )
         |> Elm.withType Gen.Internal.Locale.annotation_.locale
         |> Elm.declaration (snakeIdentifier info)
@@ -256,7 +257,12 @@ basicLanguage info =
 
 generatedLangExpression : LanguageInfo -> Elm.Expression
 generatedLangExpression info =
-    Gen.Internal.LanguageInfo.make_.languageInfo
+    Gen.Internal.LanguageInfo.expand (generateCompactExpression (Internal.LanguageInfo.compact info))
+
+
+generateCompactExpression : Internal.LanguageInfo.Compact -> Elm.Expression
+generateCompactExpression info =
+    Gen.Internal.LanguageInfo.make_.compact
         { language = Elm.string info.language
         , script = maybeExpr Elm.string info.script
         , territory = maybeExpr Elm.string info.territory
@@ -264,9 +270,9 @@ generatedLangExpression info =
         , periodNames = pattern3Expr periodNamesExpr info.periodNames
         , datePatterns = patternExpr Elm.string info.datePatterns
         , monthFormatNames = pattern3Expr monthNamesExpr info.monthFormatNames
-        , monthStandaloneNames = pattern3Expr monthNamesExpr info.monthStandaloneNames
+        , monthStandaloneNames = maybeExpr (pattern3Expr monthNamesExpr) info.monthStandaloneNames
         , weekdayFormatNames = pattern3Expr weekdayNamesExpr info.weekdayFormatNames
-        , weekdayStandaloneNames = pattern3Expr weekdayNamesExpr info.weekdayStandaloneNames
+        , weekdayStandaloneNames = maybeExpr (pattern3Expr weekdayNamesExpr) info.weekdayStandaloneNames
         , eraNames = pattern3Expr eraNamesExpr info.eraNames
         , timePatterns = patternExpr Elm.string info.timePatterns
         , dateTimePatterns = patternExpr Elm.string info.dateTimePatterns
