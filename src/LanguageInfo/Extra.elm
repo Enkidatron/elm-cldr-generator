@@ -1,35 +1,79 @@
-module LanguageInfo.Extra exposing (decoder, skewerCase, snakeIdentifier)
+module LanguageInfo.Extra exposing (decoder, fullFormatParser, skewerCase, snakeIdentifier)
 
+import FormatNumber.Locales
 import Internal.LanguageInfo exposing (LanguageInfo)
 import Internal.Structures exposing (EraNames, MonthNames, Pattern3, Patterns, PeriodNames, WeekdayNames)
 import Json.Decode as JD exposing (Decoder)
+import Json.Decode.Extra as JDExtra
 import Json.Decode.Pipeline as JDPipe
+import Maybe.Extra
+import Parser exposing ((|.), (|=), Parser)
 import Set exposing (Set)
+import String.Extra
 
 
 decoder : String -> Decoder LanguageInfo
 decoder langCode =
-    JD.at [ "main", langCode ] languageInfoDecoder
+    gregorianDecoder langCode
+        |> JD.andThen (numbersDecoder langCode)
+        |> JD.andThen (currenciesDecoder langCode)
 
 
-languageInfoDecoder : Decoder LanguageInfo
-languageInfoDecoder =
-    JD.succeed LanguageInfo
-        |> JDPipe.requiredAt [ "identity", "language" ] JD.string
-        |> JDPipe.optionalAt [ "identity", "script" ] (JD.nullable JD.string) Nothing
-        |> JDPipe.optionalAt [ "identity", "territory" ] (JD.nullable JD.string) Nothing
-        |> JDPipe.optionalAt [ "identity", "variant" ] (JD.nullable JD.string) Nothing
-        |> JDPipe.custom periodNamesDecoder
-        |> JDPipe.custom datePatternsDecoder
-        |> JDPipe.custom monthFormatNamesDecoder
-        |> JDPipe.custom monthStandaloneNamesDecoder
-        |> JDPipe.custom weekdayFormatNamesDecoder
-        |> JDPipe.custom weekdayStandaloneNamesDecoder
-        |> JDPipe.custom eraNamesDecoder
-        |> JDPipe.custom timePatternsDecoder
-        |> JDPipe.custom dateTimePatternsDecoder
-        |> JDPipe.custom availableFormatsDecoder
-        |> JDPipe.custom timeSkeletonsDecoder
+gregorianDecoder :
+    String
+    ->
+        Decoder
+            (FormatNumber.Locales.Locale
+             -> FormatNumber.Locales.Locale
+             -> FormatNumber.Locales.Locale
+             -> List ( String, String )
+             -> LanguageInfo
+            )
+gregorianDecoder langCode =
+    JD.at [ "gregorian", "main", langCode ]
+        (JD.succeed LanguageInfo
+            |> JDPipe.requiredAt [ "identity", "language" ] JD.string
+            |> JDPipe.optionalAt [ "identity", "script" ] (JD.nullable JD.string) Nothing
+            |> JDPipe.optionalAt [ "identity", "territory" ] (JD.nullable JD.string) Nothing
+            |> JDPipe.optionalAt [ "identity", "variant" ] (JD.nullable JD.string) Nothing
+            |> JDPipe.custom periodNamesDecoder
+            |> JDPipe.custom datePatternsDecoder
+            |> JDPipe.custom monthFormatNamesDecoder
+            |> JDPipe.custom monthStandaloneNamesDecoder
+            |> JDPipe.custom weekdayFormatNamesDecoder
+            |> JDPipe.custom weekdayStandaloneNamesDecoder
+            |> JDPipe.custom eraNamesDecoder
+            |> JDPipe.custom timePatternsDecoder
+            |> JDPipe.custom dateTimePatternsDecoder
+            |> JDPipe.custom availableFormatsDecoder
+            |> JDPipe.custom timeSkeletonsDecoder
+        )
+
+
+numbersDecoder :
+    String
+    ->
+        (FormatNumber.Locales.Locale
+         -> FormatNumber.Locales.Locale
+         -> FormatNumber.Locales.Locale
+         -> b
+        )
+    -> Decoder b
+numbersDecoder langCode decodedSoFar =
+    JD.at [ "numbers", "main", langCode ]
+        (JD.succeed decodedSoFar
+            |> JDPipe.custom decimalNumberFormatDecoder
+            |> JDPipe.custom currencyNumberFormatDecoder
+            |> JDPipe.custom percentNumberFormatDecoder
+        )
+
+
+currenciesDecoder : String -> (List ( String, String ) -> b) -> Decoder b
+currenciesDecoder langCode decodedSoFar =
+    JD.at [ "currencies", "main", langCode ]
+        (JD.succeed decodedSoFar
+            |> JDPipe.custom currencySymbolsDecoder
+        )
 
 
 periodNamesDecoder : Decoder (Pattern3 PeriodNames)
@@ -200,3 +244,170 @@ fixReservedKeywords word =
 
     else
         word
+
+
+
+-- Number and Currencies
+
+
+type alias FullFormatParsed =
+    { positive : FormatParsed
+    , negative : Maybe FormatParsed
+    }
+
+
+type alias FormatParsed =
+    { prefix : String
+    , system : FormatNumber.Locales.System
+    , decimals : FormatNumber.Locales.Decimals
+    , suffix : String
+    }
+
+
+fullFormatParser : Parser FullFormatParsed
+fullFormatParser =
+    Parser.succeed FullFormatParsed
+        |= formatParser
+        |= negativeFormatParser
+        |. Parser.end
+
+
+formatParser : Parser FormatParsed
+formatParser =
+    Parser.succeed FormatParsed
+        |= prefixParser
+        |= systemParser
+        |= decimalsParser
+        |= suffixParser
+
+
+negativeFormatParser : Parser (Maybe FormatParsed)
+negativeFormatParser =
+    Parser.oneOf
+        [ Parser.map (\_ -> Nothing) Parser.end
+        , Parser.succeed Just
+            |. Parser.chompIf (\char -> char == ';')
+            |= formatParser
+        ]
+
+
+prefixParser : Parser String
+prefixParser =
+    Parser.chompUntil "#"
+        |> Parser.getChompedString
+
+
+systemParser : Parser FormatNumber.Locales.System
+systemParser =
+    Parser.chompWhile (\char -> List.member char [ '#', ',', '0' ])
+        |> Parser.getChompedString
+        |> Parser.andThen
+            (\words ->
+                case words of
+                    "#,##0" ->
+                        Parser.succeed FormatNumber.Locales.Western
+
+                    "#,##,##0" ->
+                        Parser.succeed FormatNumber.Locales.Indian
+
+                    _ ->
+                        Parser.problem ("Cannot parse a system from: " ++ words)
+            )
+
+
+decimalsParser : Parser FormatNumber.Locales.Decimals
+decimalsParser =
+    Parser.chompWhile (\char -> List.member char [ '.', '0', '#' ])
+        |> Parser.getChompedString
+        |> Parser.andThen
+            (\words ->
+                case words of
+                    "" ->
+                        Parser.succeed (FormatNumber.Locales.Exact 0)
+
+                    ".00" ->
+                        Parser.succeed (FormatNumber.Locales.Exact 2)
+
+                    ".##" ->
+                        Parser.succeed (FormatNumber.Locales.Max 2)
+
+                    ".###" ->
+                        Parser.succeed (FormatNumber.Locales.Max 3)
+
+                    _ ->
+                        Parser.problem ("Cannot parse the correct number of decimals from: " ++ words)
+            )
+
+
+suffixParser : Parser String
+suffixParser =
+    Parser.chompWhile (\char -> char /= ';')
+        |> Parser.getChompedString
+
+
+numberLocaleDecoder : String -> Decoder FormatNumber.Locales.Locale
+numberLocaleDecoder formatName =
+    JD.succeed
+        (\formatString group decimal minusSign ->
+            let
+                parseResult =
+                    Parser.run fullFormatParser formatString
+            in
+            Result.map
+                (\parsed ->
+                    { decimals = parsed.positive.decimals
+                    , system = parsed.positive.system
+                    , thousandSeparator = group
+                    , decimalSeparator = decimal
+                    , negativePrefix = Maybe.Extra.unwrap (minusSign ++ parsed.positive.prefix) .prefix parsed.negative
+                    , negativeSuffix = Maybe.Extra.unwrap parsed.positive.suffix .suffix parsed.negative
+                    , positivePrefix = parsed.positive.prefix
+                    , positiveSuffix = parsed.positive.suffix
+                    , zeroPrefix = parsed.positive.prefix
+                    , zeroSuffix = parsed.positive.suffix
+                    }
+                )
+                parseResult
+                |> Result.mapError Parser.deadEndsToString
+                |> JDExtra.fromResult
+        )
+        |> JDPipe.requiredAt [ "numbers", formatName, "standard" ] JD.string
+        |> JDPipe.requiredAt [ "numbers", "symbols-numberSystem-latn", "group" ] JD.string
+        |> JDPipe.requiredAt [ "numbers", "symbols-numberSystem-latn", "decimal" ] JD.string
+        |> JDPipe.requiredAt [ "numbers", "symbols-numberSystem-latn", "minusSign" ] JD.string
+        |> JDPipe.resolve
+
+
+decimalNumberFormatDecoder : Decoder FormatNumber.Locales.Locale
+decimalNumberFormatDecoder =
+    numberLocaleDecoder "decimalFormats-numberSystem-latn"
+
+
+currencyNumberFormatDecoder : Decoder FormatNumber.Locales.Locale
+currencyNumberFormatDecoder =
+    numberLocaleDecoder "currencyFormats-numberSystem-latn"
+
+
+percentNumberFormatDecoder : Decoder FormatNumber.Locales.Locale
+percentNumberFormatDecoder =
+    numberLocaleDecoder "percentFormats-numberSystem-latn"
+
+
+currencySymbolsDecoder : Decoder (List ( String, String ))
+currencySymbolsDecoder =
+    JD.at [ "numbers", "currencies" ]
+        (JD.keyValuePairs
+            (JD.maybe
+                (JD.oneOf
+                    [ JD.field "symbol" JD.string
+                    , JD.field "symbol-alt-narrow" JD.string
+                    ]
+                )
+            )
+            |> JD.map
+                (List.filterMap
+                    (\( key, maybeSymbol ) ->
+                        Maybe.map (Tuple.pair key) maybeSymbol
+                    )
+                )
+        )

@@ -1,15 +1,19 @@
 module CodeGen exposing
-    ( languageFile
+    ( currencyFile
+    , languageFile
     , mainLocaleFile
     )
 
 import Cldr.Format.Options exposing (FractionalDigits(..), HourType(..), NameOption(..), NumberOption(..), NumberOrTextOption(..), TextOption(..))
+import CurrencyDataInfo exposing (CurrencyDataInfo)
 import DayPeriodsInfo exposing (DayPeriodsInfo)
 import Dict
 import Elm
 import Elm.Annotation
 import Elm.Op
+import FormatNumber.Locales
 import Gen.Dict
+import Gen.FormatNumber.Locales
 import Gen.Internal.DayPeriodRule
 import Gen.Internal.LanguageInfo
 import Gen.Internal.Locale
@@ -17,6 +21,7 @@ import Gen.Internal.Parse
 import Gen.Internal.Structures
 import Gen.Maybe
 import Internal.DayPeriodRule exposing (DayPeriodRule)
+import Internal.Format exposing (number)
 import Internal.LanguageInfo exposing (LanguageInfo)
 import Internal.LanguageInfo.Encode
 import Internal.Options exposing (MinimalOptionSet(..))
@@ -24,6 +29,13 @@ import Internal.Structures exposing (EraNames, MonthNames, Pattern3, Patterns, P
 import LanguageInfo.Extra exposing (snakeIdentifier)
 import List.Extra
 import String.Extra
+
+
+currencyFile : CurrencyDataInfo -> String
+currencyFile currencyDataInfo =
+    Elm.file [ "Generated", "Currency" ]
+        [ decimalsOverrideDeclaration currencyDataInfo ]
+        |> .contents
 
 
 localeAnnotation : Elm.Annotation.Annotation
@@ -278,7 +290,46 @@ generateCompactExpression info =
         , dateTimePatterns = patternExpr Elm.string info.dateTimePatterns
         , availableFormats = Elm.list (List.map (\( k, v ) -> Elm.tuple (Elm.string k) (Elm.string v)) info.availableFormats)
         , timeSkeletons = patternExpr Elm.string info.timeSkeletons
+        , decimalNumberFormat = numberFormatLocaleExpr info.decimalNumberFormat
+        , currencyNumberFormat = numberFormatLocaleExpr info.currencyNumberFormat
+        , percentNumberFormat = numberFormatLocaleExpr info.percentNumberFormat
+        , currencySymbols = Elm.list (List.map (\( k, v ) -> Elm.tuple (Elm.string k) (Elm.string v)) info.currencySymbols)
         }
+
+
+numberFormatLocaleExpr : FormatNumber.Locales.Locale -> Elm.Expression
+numberFormatLocaleExpr locale =
+    Gen.FormatNumber.Locales.make_.locale
+        { decimals =
+            case locale.decimals of
+                FormatNumber.Locales.Min min ->
+                    Gen.FormatNumber.Locales.make_.min (Elm.int min)
+
+                FormatNumber.Locales.Max max ->
+                    Gen.FormatNumber.Locales.make_.max (Elm.int max)
+
+                FormatNumber.Locales.Exact exact ->
+                    Gen.FormatNumber.Locales.make_.exact (Elm.int exact)
+        , system =
+            case locale.system of
+                FormatNumber.Locales.Western ->
+                    Gen.FormatNumber.Locales.make_.western
+
+                FormatNumber.Locales.Indian ->
+                    Gen.FormatNumber.Locales.make_.indian
+        , thousandSeparator = Elm.string locale.thousandSeparator
+        , decimalSeparator = Elm.string locale.decimalSeparator
+        , negativePrefix = Elm.string locale.negativePrefix
+        , negativeSuffix = Elm.string locale.negativeSuffix
+        , positivePrefix = Elm.string locale.positivePrefix
+        , positiveSuffix = Elm.string locale.positiveSuffix
+        , zeroPrefix = Elm.string locale.zeroPrefix
+        , zeroSuffix = Elm.string locale.zeroSuffix
+        }
+
+
+
+-- Locale Files
 
 
 dayPeriodRuleDeclaration : String -> DayPeriodsInfo -> Elm.Declaration
@@ -399,3 +450,22 @@ maybeExpr toExpr maybeItem =
 
         Nothing ->
             Gen.Maybe.make_.nothing
+
+
+
+-- Currency Supplemental File
+
+
+decimalsOverrideDeclaration : CurrencyDataInfo -> Elm.Declaration
+decimalsOverrideDeclaration currencyDataInfo =
+    Gen.Dict.fromList
+        (Dict.toList currencyDataInfo
+            |> List.map
+                (\( currencyTag, decimals ) ->
+                    Elm.tuple
+                        (Elm.string currencyTag)
+                        (Gen.FormatNumber.Locales.make_.exact (Elm.int decimals))
+                )
+        )
+        |> Elm.withType (Gen.Dict.annotation_.dict Elm.Annotation.string Gen.FormatNumber.Locales.annotation_.decimals)
+        |> Elm.declaration "decimalsOverride"

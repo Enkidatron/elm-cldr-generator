@@ -1,6 +1,7 @@
 module GenerateCldr exposing (program)
 
 import CodeGen
+import CurrencyDataInfo exposing (CurrencyDataInfo)
 import DayPeriodsInfo exposing (DayPeriodsInfo)
 import Internal.LanguageInfo exposing (LanguageInfo)
 import Json.Decode as JD
@@ -13,9 +14,14 @@ import StateMachine exposing (Looper(..))
 import String.Extra
 
 
-baseDir : String
-baseDir =
+datesBaseDir : String
+datesBaseDir =
     "./cldr-json/cldr-json/cldr-dates-modern/main"
+
+
+numbersBaseDir : String
+numbersBaseDir =
+    "./cldr-json/cldr-json/cldr-numbers-modern/main"
 
 
 dayPeriodsFileName : String
@@ -26,6 +32,16 @@ dayPeriodsFileName =
 mainLocaleFileName : String
 mainLocaleFileName =
     "./elm-cldr/src/Cldr/Locale.elm"
+
+
+currencyDataFileName : String
+currencyDataFileName =
+    "./cldr-json/cldr-json/cldr-core/supplemental/currencyData.json"
+
+
+currencyFileName : String
+currencyFileName =
+    "./elm-cldr/src/Generated/Currency.elm"
 
 
 generatedDirName : String
@@ -45,7 +61,10 @@ program =
 
 type StateMachine
     = Init
+    | HaveCurrencyData CurrencyDataInfo
+    | CurrencyDataFileWritten
     | HaveDayPeriods DayPeriodsInfo
+    | HaveDateDirNames DayPeriodsInfo (List ( String, String ))
     | HaveDirNames DayPeriodsInfo (List ( String, String ))
     | HaveLanguageBundles DayPeriodsInfo (List ( String, List LanguageInfo ))
     | HaveWrittenLanguageBundles (List ( String, List LanguageInfo ))
@@ -56,6 +75,18 @@ step : StateMachine -> IO (Looper StateMachine)
 step machine =
     case machine of
         Init ->
+            File.contentsOf currencyDataFileName
+                |> IO.exitOnError identity
+                |> IO.map (JD.decodeString CurrencyDataInfo.decoder)
+                |> IO.exitOnError JD.errorToString
+                |> IO.map (HaveCurrencyData >> Continue)
+
+        HaveCurrencyData currencyDataInfo ->
+            writeCurrencyFile currencyDataInfo
+                |> print ("Successfully wrote " ++ currencyFileName)
+                |> IO.map (\_ -> Continue CurrencyDataFileWritten)
+
+        CurrencyDataFileWritten ->
             File.contentsOf dayPeriodsFileName
                 |> IO.exitOnError identity
                 |> IO.map (JD.decodeString DayPeriodsInfo.decoder)
@@ -63,15 +94,30 @@ step machine =
                 |> IO.map (HaveDayPeriods >> Continue)
 
         HaveDayPeriods dayPeriods ->
-            File.readDir baseDir
+            File.readDir datesBaseDir
                 |> IO.exitOnError identity
                 |> IO.andThen (List.map checkIsDir >> IO.combine)
                 |> reportAndFilterErrors identity
-                |> IO.map (HaveDirNames dayPeriods >> Continue)
+                |> IO.map (HaveDateDirNames dayPeriods >> Continue)
+
+        HaveDateDirNames dayPeriods datesDirList ->
+            File.readDir numbersBaseDir
+                |> IO.exitOnError identity
+                |> IO.andThen (List.map checkIsDir >> IO.combine)
+                |> reportAndFilterErrors identity
+                |> IO.andThen
+                    (\numbersDirList ->
+                        if numbersDirList == datesDirList then
+                            IO.return (Continue (HaveDirNames dayPeriods datesDirList))
+
+                        else
+                            StateMachine.halt
+                                |> print "ERROR: Dates and Numbers directories do not match"
+                    )
 
         HaveDirNames dayPeriods dirList ->
             IO.return dirList
-                |> andThenHelp loadGregorianJson
+                |> andThenHelp loadAllJson
                 |> reportAndFilterErrors identity
                 |> log jsonLoadSuccessMessage
                 |> mapHelp2 decodeFile
@@ -162,19 +208,56 @@ print message =
     IO.andThen (\a -> Proc.print message |> IO.map (always a))
 
 
+type alias AllJson =
+    { gregorian : String
+    , numbers : String
+    , currencies : String
+    }
+
+
+loadAllJson : String -> IO (Result String AllJson)
+loadAllJson dir =
+    IO.do (loadGregorianJson dir) <|
+        \gregorianResult ->
+            IO.do (loadNumbersJson dir) <|
+                \numbersResult ->
+                    IO.do (loadCurrencyJson dir) <|
+                        \currencyResult ->
+                            IO.return (Result.map3 AllJson gregorianResult numbersResult currencyResult)
+
+
 loadGregorianJson : String -> IO (Result String String)
 loadGregorianJson dir =
-    File.contentsOf (String.join "/" [ baseDir, dir, "ca-gregorian.json" ])
+    File.contentsOf (String.join "/" [ datesBaseDir, dir, "ca-gregorian.json" ])
+
+
+loadNumbersJson : String -> IO (Result String String)
+loadNumbersJson dir =
+    File.contentsOf (String.join "/" [ numbersBaseDir, dir, "numbers.json" ])
+
+
+loadCurrencyJson : String -> IO (Result String String)
+loadCurrencyJson dir =
+    File.contentsOf (String.join "/" [ numbersBaseDir, dir, "currencies.json" ])
 
 
 jsonLoadSuccessMessage : List a -> String
 jsonLoadSuccessMessage jsonContents =
-    "Successfully read " ++ String.fromInt (List.length jsonContents) ++ " ca-gregorian JSON files."
+    "Successfully read " ++ String.fromInt (List.length jsonContents) ++ " ca-gregorian, numbers, and currencies JSON files."
 
 
-decodeFile : String -> String -> Result JD.Error LanguageInfo
+decodeFile : String -> AllJson -> Result JD.Error LanguageInfo
 decodeFile dirName contents =
-    JD.decodeString (LanguageInfo.Extra.decoder dirName) contents
+    JD.decodeString (LanguageInfo.Extra.decoder dirName) <|
+        String.concat
+            [ "{\"gregorian\": "
+            , contents.gregorian
+            , ", \"numbers\": "
+            , contents.numbers
+            , ", \"currencies\": "
+            , contents.currencies
+            , "}"
+            ]
 
 
 jsonDecodeSuccessMessage : List a -> String
@@ -210,6 +293,12 @@ writeMainLocaleFile infos =
     File.writeContentsTo mainLocaleFileName
         (CodeGen.mainLocaleFile infos)
         |> IO.map (always infos)
+
+
+writeCurrencyFile : CurrencyDataInfo -> IO ()
+writeCurrencyFile info =
+    File.writeContentsTo currencyFileName
+        (CodeGen.currencyFile info)
 
 
 reportAndFilterErrors : (e -> String) -> IO (List ( String, Result e a )) -> IO (List ( String, a ))
